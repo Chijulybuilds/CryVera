@@ -1,0 +1,19 @@
+{
+  "name": "ccrt",
+  "version": "1.0.0",
+  "description": "> **A Cross-Chain Yield Vault Protocol powered by Chainlink CCIP.**",
+  "main": "index.js",
+  "directories": {
+    "lib": "lib",
+    "test": "test"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@chainlink/contracts": "^1.2.0"
+  }
+}

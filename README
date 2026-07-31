@@ -1,0 +1,2 @@
+1. Build the RBT
+2. Build the Canonical Vault that accepts, ETH, wBTC and USDC using Chainlink PriceFeed to get recent prices. 
