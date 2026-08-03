@@ -16,5 +16,8 @@
       "name": "v5.6.1",
       "rev": "5fd1781b1454fd1ef8e722282f86f9293cacf256"
     }
+  },
+  "lib/openzeppelin-contracts-upgradeable": {
+    "rev": "4a454f7d50fef0257aacbbc5225c036929a63cbb"
   }
 }

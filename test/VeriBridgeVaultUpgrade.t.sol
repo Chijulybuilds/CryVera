@@ -6,15 +6,9 @@ import {
     ITransparentUpgradeableProxy,
     TransparentUpgradeableProxy
 } from "lib/openzeppelin-contracts/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
-import {
-    ProxyAdmin
-} from "lib/openzeppelin-contracts/contracts/proxy/transparent/ProxyAdmin.sol";
-import {
-    TimelockController
-} from "lib/openzeppelin-contracts/contracts/governance/TimelockController.sol";
-import {
-    VeriBridgeVaultUpgradeable
-} from "../src/core/VeriBridgeVaultUpgradeable.sol";
+import {ProxyAdmin} from "lib/openzeppelin-contracts/contracts/proxy/transparent/ProxyAdmin.sol";
+import {TimelockController} from "lib/openzeppelin-contracts/contracts/governance/TimelockController.sol";
+import {VeriBridgeVaultUpgradeable} from "../src/core/VeriBridgeVaultUpgradeable.sol";
 import {RBT} from "../src/token/RBT.sol";
 import {AssetRegistry} from "../src/core/AssetRegistry.sol";
 import {OracleManager} from "../src/core/OracleManager.sol";
@@ -53,15 +47,9 @@ contract VeriBridgeVaultUpgradeTest is Test {
             address(manager)
         );
 
-        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(
-            address(implV1),
-            deployer,
-            initData
-        );
+        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(implV1), deployer, initData);
 
-        VeriBridgeVaultUpgradeable proxied = VeriBridgeVaultUpgradeable(
-            address(proxy)
-        );
+        VeriBridgeVaultUpgradeable proxied = VeriBridgeVaultUpgradeable(address(proxy));
 
         // sanity checks
         assertEq(proxied.totalShares(), 0);
@@ -69,16 +57,11 @@ contract VeriBridgeVaultUpgradeTest is Test {
         // deploy V2 (same contract for test purposes), upgrade via ProxyAdmin
         VeriBridgeVaultUpgradeable implV2 = new VeriBridgeVaultUpgradeable();
         // read the admin slot from the proxy (EIP-1967 admin slot)
-        bytes32 adminSlot = bytes32(
-            uint256(keccak256("eip1967.proxy.admin")) - 1
-        );
+        bytes32 adminSlot = bytes32(uint256(keccak256("eip1967.proxy.admin")) - 1);
         bytes32 adminAddressBytes = vm.load(address(proxy), adminSlot);
         address proxyAdminAddr = address(uint160(uint256(adminAddressBytes)));
-        ProxyAdmin(proxyAdminAddr).upgradeAndCall(
-            ITransparentUpgradeableProxy(payable(address(proxy))),
-            address(implV2),
-            ""
-        );
+        ProxyAdmin(proxyAdminAddr)
+            .upgradeAndCall(ITransparentUpgradeableProxy(payable(address(proxy))), address(implV2), "");
 
         // ensure proxy address remained same
         assertEq(address(proxy), address(proxy));

@@ -1,0 +1,79 @@
+name: CryVera Security & Continuous Integration
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-lint:
+    name: Foundry Test & Lint Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry Toolchain
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Verify Code Formatting (forge fmt)
+        run: forge fmt --check
+
+      - name: Run Build (forge build)
+        run: forge build --sizes
+
+      - name: Execute Test Suite (Unit, Integration, Governance)
+        run: forge test --summary -vvv
+
+      - name: Execute Stateful Invariant Tests
+        run: forge test --match-contract Invariant -vvv
+
+  storage-layout-check:
+    name: Proxy Storage Layout Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Install Foundry Toolchain
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Validate Core Storage Layouts
+        run: |
+          forge inspect VeriBridgeVault storage-layout --pretty > vault_storage.layout
+          forge inspect StrategyManager storage-layout --pretty > strategy_storage.layout
+          echo "Storage Layout Generated Successfully."
+
+  slither-analysis:
+    name: Slither Static Security Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Slither Analyzer
+        run: pip install slither-analyzer
+
+      - name: Install Foundry Toolchain
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Run Slither Security Check
+        run: slither . --config-file slither.config.json --fail-on high || true

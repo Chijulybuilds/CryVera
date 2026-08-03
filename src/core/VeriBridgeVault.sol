@@ -20,18 +20,37 @@ import {Errors} from "../libraries/Errors.sol";
 /// @dev RBT supply equals vault shares. Strategy values are read live; the router never mirrors them.
 contract VeriBridgeVault is AccessControl, ReentrancyGuard {
     using SafeERC20 for IERC20;
+
+    /// ============================================================================
+    /// CONSTANTS
+    /// ============================================================================
     uint256 public constant VIRTUAL_ASSETS = 1e18;
     uint256 public constant VIRTUAL_SHARES = 1e18;
     bytes32 public constant GUARDIAN_ROLE = keccak256("GUARDIAN_ROLE");
 
+    /// ============================================================================
+    /// IMMUTABLES (Stored in Bytecode - Occupy No Storage Slots)
+    /// ============================================================================
     IAssetRegistry public immutable assetRegistry;
     IOracle public immutable oracle;
     IRBT public immutable rbt;
     IStrategyManager public immutable strategyManager;
-    IPositionManager public positionManager;
-    bool public depositsPaused;
-    mapping(address => uint256) private s_idleAssets; // accounted custody only; unsolicited token donations are excluded.
 
+    /// ============================================================================
+    /// STORAGE LAYOUT ANNOTATIONS (SLOTS 0 - 2)
+    /// ============================================================================
+    /// @dev Slot 0: Optional position manager for user tracking.
+    IPositionManager public positionManager;
+
+    /// @dev Slot 1: Global deposit pause sentinel state.
+    bool public depositsPaused;
+
+    /// @dev Slot 2: Accounted custody only; unsolicited token donations are excluded.
+    mapping(address => uint256) private s_idleAssets;
+
+    /// ============================================================================
+    /// EVENTS
+    /// ============================================================================
     event Deposited(
         address indexed payer, address indexed receiver, address indexed asset, uint256 assets, uint256 shares
     );
@@ -41,6 +60,7 @@ contract VeriBridgeVault is AccessControl, ReentrancyGuard {
     event Allocated(uint256 indexed strategyId, address indexed strategy, uint256 assets);
     event Harvested(address indexed strategy, uint256 assetsBefore, uint256 assetsAfter);
     event DepositsPaused(bool paused);
+    event TokenRescued(address indexed token, address indexed recipient, uint256 amount);
 
     constructor(address admin, address guardian, address registry, address oracle_, address rbt_, address manager) {
         if (
@@ -54,6 +74,7 @@ contract VeriBridgeVault is AccessControl, ReentrancyGuard {
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(GUARDIAN_ROLE, guardian);
     }
+
     modifier whenDepositsOpen() {
         if (depositsPaused) revert Errors.DepositPaused();
         _;
@@ -119,6 +140,31 @@ contract VeriBridgeVault is AccessControl, ReentrancyGuard {
         address strategy = strategyManager.getStrategyAddress(strategyId);
         (uint256 beforeAssets, uint256 afterAssets) = strategyManager.harvestStrategy(strategy);
         emit Harvested(strategy, beforeAssets, afterAssets);
+    }
+
+    /**
+     * @notice Rescues accidentally sent non-collateral ERC-20 tokens.
+     * @dev Strictly reverts if attempting to rescue supported vault collateral or RBT share receipts.
+     * @param token Address of the stuck token to recover.
+     * @param recipient Destination address for recovered tokens.
+     * @param amount Token amount to transfer.
+     */
+    function rescueERC20(address token, address recipient, uint256 amount)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+        nonReentrant
+    {
+        if (token == address(0) || recipient == address(0)) revert Errors.ZeroAddress();
+        if (amount == 0) revert Errors.ZeroAmount();
+
+        // Invariant protection: cannot rescue RBT share receipts
+        if (token == address(rbt)) revert Errors.Unauthorized();
+
+        // Invariant protection: cannot rescue any active vault collateral asset
+        if (assetRegistry.isSupported(token)) revert Errors.Unauthorized();
+
+        IERC20(token).safeTransfer(recipient, amount);
+        emit TokenRescued(token, recipient, amount);
     }
 
     function setPositionManager(address manager) external onlyRole(DEFAULT_ADMIN_ROLE) {

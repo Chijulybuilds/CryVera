@@ -24,10 +24,12 @@ contract StrategyManager is AccessControl, ReentrancyGuard {
     mapping(address => bool) private s_active;
     mapping(address => bool) private s_paused;
     mapping(address => uint256) public depositCap;
+    mapping(address => uint256) public maxDebtPerStrategy;
 
     event StrategyRegistered(uint256 indexed id, address indexed strategy, address indexed asset, uint256 cap);
     event StrategyStatusUpdated(address indexed strategy, bool active, bool paused);
     event DepositCapUpdated(address indexed strategy, uint256 cap);
+    event MaxDebtPerStrategyUpdated(address indexed strategy, uint256 maxDebt);
 
     constructor(address admin) {
         if (admin == address(0)) revert Errors.ZeroAddress();
@@ -84,6 +86,17 @@ contract StrategyManager is AccessControl, ReentrancyGuard {
         _registered(strategy);
         depositCap[strategy] = cap;
         emit DepositCapUpdated(strategy, cap);
+    }
+
+    /**
+     * @notice Configures the hard capital allocation ceiling for a specific strategy.
+     * @param strategy Address of target strategy adapter.
+     * @param maxDebt Maximum underlying capital exposure limit allowed.
+     */
+    function setMaxDebtPerStrategy(address strategy, uint256 maxDebt) external onlyRole(STRATEGY_ADMIN_ROLE) {
+        _registered(strategy);
+        maxDebtPerStrategy[strategy] = maxDebt;
+        emit MaxDebtPerStrategyUpdated(strategy, maxDebt);
     }
 
     /// @dev The vault transfers only the requested amount; this router verifies actual manager and strategy deltas.
@@ -168,9 +181,19 @@ contract StrategyManager is AccessControl, ReentrancyGuard {
     function _enterable(address strategy, uint256 assets) private view {
         _registered(strategy);
         if (!s_active[strategy] || s_paused[strategy]) revert Errors.StrategyNotActive(strategy);
+
+        uint256 totalAfter = IStrategy(strategy).totalAssets() + assets;
+
+        // Verify deposit cap limit if set
         uint256 cap = depositCap[strategy];
-        if (cap != 0 && IStrategy(strategy).totalAssets() + assets > cap) {
-            revert Errors.DepositCapExceeded(IStrategy(strategy).totalAssets() + assets, cap);
+        if (cap != 0 && totalAfter > cap) {
+            revert Errors.DepositCapExceeded(totalAfter, cap);
+        }
+
+        // Verify max debt per strategy limit if set
+        uint256 maxDebt = maxDebtPerStrategy[strategy];
+        if (maxDebt != 0 && totalAfter > maxDebt) {
+            revert Errors.DepositCapExceeded(totalAfter, maxDebt);
         }
     }
 }

@@ -6,6 +6,7 @@ import "lib/openzeppelin-contracts/contracts/governance/TimelockController.sol";
 
 contract Box {
     uint256 public value;
+
     function store(uint256 v) external {
         value = v;
     }
@@ -21,12 +22,7 @@ contract TimelockScheduleTest is Test {
         proposers[0] = address(this);
         address[] memory executors = new address[](1);
         executors[0] = address(0);
-        timelock = new TimelockController(
-            DELAY,
-            proposers,
-            executors,
-            address(this)
-        );
+        timelock = new TimelockController(DELAY, proposers, executors, address(this));
         box = new Box();
     }
 
@@ -35,13 +31,7 @@ contract TimelockScheduleTest is Test {
         bytes32 predecessor = bytes32(0);
         bytes32 salt = bytes32(0);
 
-        bytes32 id = timelock.hashOperation(
-            address(box),
-            0,
-            data,
-            predecessor,
-            salt
-        );
+        bytes32 id = timelock.hashOperation(address(box), 0, data, predecessor, salt);
 
         // schedule
         timelock.schedule(address(box), 0, data, predecessor, salt, DELAY);

@@ -7,10 +7,7 @@ import {CIPRegistry} from "../src/governance/CIPRegistry.sol";
 contract CIPRegistryTest is Test {
     CIPRegistry public registry;
     event CIPRegistered(
-        uint256 indexed cipId,
-        bytes32 indexed contentHash,
-        address indexed target,
-        address newImplementation
+        uint256 indexed cipId, bytes32 indexed contentHash, address indexed target, address newImplementation
     );
 
     function setUp() public {
