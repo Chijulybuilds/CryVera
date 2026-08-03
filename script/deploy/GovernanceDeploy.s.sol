@@ -28,10 +28,11 @@ contract GovernanceDeploy is Script {
         TimelockController timelock = new TimelockController(
             minDelay,
             proposers,
-            executors
+            executors,
+            msg.sender
         );
 
-        ProxyAdmin proxyAdmin = new ProxyAdmin();
+        ProxyAdmin proxyAdmin = new ProxyAdmin(msg.sender);
 
         // Example of deploying a dummy implementation and proxy would go here.
 
