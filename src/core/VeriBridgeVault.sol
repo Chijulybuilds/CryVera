@@ -142,13 +142,17 @@ contract VeriBridgeVault is AccessControl, ReentrancyGuard {
 
     function totalAssets() public view returns (uint256 value) {
         uint256 assetCount = assetRegistry.totalAssetsSupported();
+
         for (uint256 i; i < assetCount; ++i) {
             address asset = assetRegistry.assetAt(i);
             value += _value(asset, s_idleAssets[asset]);
         }
+
         uint256 count = strategyManager.strategyCount();
+
         for (uint256 i; i < count; ++i) {
             address strategy = strategyManager.strategyAt(i);
+
             value += _value(strategyManager.strategyAsset(strategy), IStrategy(strategy).totalAssets());
         }
     }
