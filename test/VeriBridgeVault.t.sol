@@ -75,6 +75,8 @@ contract MockOracle is IOracle {
     function setStalenessThreshold(address, uint256) external {}
     function setPriceBounds(address, uint256, uint256) external {}
     function clearPriceBounds(address) external {}
+    function setSequencerFeed(address) external {}
+    function setSequencerGracePeriod(uint256) external {}
     function syncPriceFeed(address) external {}
 }
 
@@ -150,9 +152,9 @@ contract MockStrategy is IStrategy {
             usdc.approve(address(vault), type(uint256).max);
         }
 
-        function testDepositMintsFixedReceiptsAndDonationDoesNotChangeRate() public {
+        function testDepositAndAllocateMintsFixedReceiptsAndDonationDoesNotChangeRate() public {
             vm.prank(alice);
-            uint256 shares = vault.deposit(address(usdc), 1_000e6, alice, 1);
+            uint256 shares = vault.depositAndAllocate(address(usdc), 1_000e6, alice, 1);
             assertEq(shares, 1_000e18);
             uint256 rate = vault.exchangeRate();
             usdc.mint(address(vault), 500e6);

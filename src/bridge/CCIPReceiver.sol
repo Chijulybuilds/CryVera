@@ -7,6 +7,7 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {CCIPReceiver as ChainlinkCCIPReceiver} from "@chainlink/ccip/applications/CCIPReceiver.sol";
 import {Client} from "@chainlink/ccip/libraries/Client.sol";
 import {Errors} from "../libraries/Errors.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
 interface IWrappedMint {
     function mint(address account, uint256 amount) external;
@@ -17,7 +18,7 @@ interface ICanonicalRelease {
 }
 
 /// @notice CCIP destination endpoint. Router authentication is inherited; each lane additionally authenticates its sender.
-contract CCIPReceiver is ChainlinkCCIPReceiver, AccessControl {
+contract CCIPReceiver is ChainlinkCCIPReceiver, AccessControl, Pausable {
     uint8 private constant MINT_WRAPPED = 1;
     uint8 private constant UNLOCK_CANONICAL = 2;
     bytes32 public constant BRIDGE_ADMIN_ROLE = keccak256("BRIDGE_ADMIN_ROLE");
@@ -51,6 +52,14 @@ contract CCIPReceiver is ChainlinkCCIPReceiver, AccessControl {
         emit AllowedSenderSet(sourceChain, sender);
     }
 
+    function pauseBridge() external onlyRole(BRIDGE_ADMIN_ROLE) {
+        _pause();
+    }
+
+    function unpauseBridge() external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _unpause();
+    }
+
     function supportsInterface(bytes4 interfaceId)
         public
         pure
@@ -61,8 +70,10 @@ contract CCIPReceiver is ChainlinkCCIPReceiver, AccessControl {
             || interfaceId == type(IERC165).interfaceId;
     }
 
-    function _ccipReceive(Client.Any2EVMMessage memory message) internal override {
-        if (processedMessage[message.messageId]) revert Errors.MessageAlreadyProcessed(message.messageId);
+    function _ccipReceive(Client.Any2EVMMessage memory message) internal override whenNotPaused {
+        if (processedMessage[message.messageId]) {
+            revert Errors.MessageAlreadyProcessed(message.messageId);
+        }
         if (message.sender.length != 32) revert Errors.InvalidMessage();
         address sender = abi.decode(message.sender, (address));
         if (sender != allowedSender[message.sourceChainSelector]) {
@@ -70,13 +81,19 @@ contract CCIPReceiver is ChainlinkCCIPReceiver, AccessControl {
         }
         (uint8 action, address receiver, uint256 amount, uint64 messageNonce) =
             abi.decode(message.data, (uint8, address, uint256, uint64));
-        if (receiver == address(0) || amount == 0) revert Errors.InvalidMessage();
+        if (receiver == address(0) || amount == 0) {
+            revert Errors.InvalidMessage();
+        }
         processedMessage[message.messageId] = true;
         if (action == MINT_WRAPPED) {
-            if (wrappedToken == address(0)) revert Errors.UnsupportedBridgeAction(action);
+            if (wrappedToken == address(0)) {
+                revert Errors.UnsupportedBridgeAction(action);
+            }
             IWrappedMint(wrappedToken).mint(receiver, amount);
         } else if (action == UNLOCK_CANONICAL) {
-            if (canonicalSender == address(0)) revert Errors.UnsupportedBridgeAction(action);
+            if (canonicalSender == address(0)) {
+                revert Errors.UnsupportedBridgeAction(action);
+            }
             ICanonicalRelease(canonicalSender).releaseCanonical(receiver, amount);
         } else {
             revert Errors.UnsupportedBridgeAction(action);

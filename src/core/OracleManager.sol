@@ -90,6 +90,12 @@ contract OracleManager is AccessControl, IOracle {
     /// @dev maxPrice == 0 means "no circuit breaker configured".
     mapping(address => PriceBounds) private s_priceBounds;
 
+    /// @notice Optional Chainlink sequencer uptime feed used to halt pricing during downtime.
+    address public sequencerFeed;
+
+    /// @notice Grace period before a stale sequencer heartbeat is treated as unhealthy.
+    uint256 public sequencerGracePeriod;
+
     /*//////////////////////////////////////////////////////////////
                             CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
@@ -102,6 +108,7 @@ contract OracleManager is AccessControl, IOracle {
         _grantRole(ORACLE_ADMIN_ROLE, admin);
 
         i_registry = IAssetRegistry(assetregistry);
+        sequencerGracePeriod = 3600;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -138,6 +145,16 @@ contract OracleManager is AccessControl, IOracle {
     }
 
     /// @inheritdoc IOracle
+    function setSequencerFeed(address feed) external onlyRole(ORACLE_ADMIN_ROLE) {
+        sequencerFeed = feed;
+    }
+
+    /// @inheritdoc IOracle
+    function setSequencerGracePeriod(uint256 gracePeriod) external onlyRole(ORACLE_ADMIN_ROLE) {
+        sequencerGracePeriod = gracePeriod;
+    }
+
+    /// @inheritdoc IOracle
     /// @dev Pure observability hook for off-chain indexers — re-emits
     ///      the registry's current feed for `asset`. Does not mutate
     ///      any state here.
@@ -156,6 +173,7 @@ contract OracleManager is AccessControl, IOracle {
     ///      check should use `isPriceValid` first.
     function getPrice(address asset) external view returns (uint256 price) {
         AssetTypes.AssetConfig memory config = _requireRegistered(asset);
+        _validateSequencer();
         return _fetchAndValidate(asset, config.priceFeed);
     }
 
@@ -219,6 +237,21 @@ contract OracleManager is AccessControl, IOracle {
             return (true, result);
         } catch {
             return (false, config);
+        }
+    }
+
+    function _validateSequencer() internal view {
+        if (sequencerFeed == address(0)) return;
+
+        try AggregatorV3Interface(sequencerFeed).latestRoundData() returns (
+            uint80, int256 answer, uint256, uint256 updatedAt, uint80
+        ) {
+            if (answer == 0) revert Errors.SequencerDown();
+            if (updatedAt == 0 || block.timestamp - updatedAt > sequencerGracePeriod) {
+                revert Errors.SequencerDown();
+            }
+        } catch {
+            revert Errors.SequencerDown();
         }
     }
 

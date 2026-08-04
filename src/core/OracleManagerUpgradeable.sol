@@ -27,6 +27,9 @@ contract OracleManagerUpgradeable is Initializable, AccessControl, IOracle {
     mapping(address => uint256) private s_stalenessThreshold;
     mapping(address => PriceBounds) private s_priceBounds;
 
+    address public sequencerFeed;
+    uint256 public sequencerGracePeriod;
+
     constructor() {
         _disableInitializers();
     }
@@ -37,6 +40,7 @@ contract OracleManagerUpgradeable is Initializable, AccessControl, IOracle {
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(ORACLE_ADMIN_ROLE, admin);
         i_registry = IAssetRegistry(assetregistry);
+        sequencerGracePeriod = 3600;
     }
 
     function setStalenessThreshold(address asset, uint256 threshold) external onlyRole(ORACLE_ADMIN_ROLE) {
@@ -60,6 +64,14 @@ contract OracleManagerUpgradeable is Initializable, AccessControl, IOracle {
         emit Events.PriceBoundsCleared(asset);
     }
 
+    function setSequencerFeed(address feed) external onlyRole(ORACLE_ADMIN_ROLE) {
+        sequencerFeed = feed;
+    }
+
+    function setSequencerGracePeriod(uint256 gracePeriod) external onlyRole(ORACLE_ADMIN_ROLE) {
+        sequencerGracePeriod = gracePeriod;
+    }
+
     function syncPriceFeed(address asset) external {
         AssetTypes.AssetConfig memory config = _requireRegistered(asset);
         emit Events.PriceFeedUpdated(asset, config.priceFeed);
@@ -67,6 +79,7 @@ contract OracleManagerUpgradeable is Initializable, AccessControl, IOracle {
 
     function getPrice(address asset) external view returns (uint256 price) {
         AssetTypes.AssetConfig memory config = _requireRegistered(asset);
+        _validateSequencer();
         return _fetchAndValidate(asset, config.priceFeed);
     }
 
@@ -112,6 +125,21 @@ contract OracleManagerUpgradeable is Initializable, AccessControl, IOracle {
             return (true, result);
         } catch {
             return (false, config);
+        }
+    }
+
+    function _validateSequencer() internal view {
+        if (sequencerFeed == address(0)) return;
+
+        try AggregatorV3Interface(sequencerFeed).latestRoundData() returns (
+            uint80, int256 answer, uint256, uint256 updatedAt, uint80
+        ) {
+            if (answer == 0) revert Errors.SequencerDown();
+            if (updatedAt == 0 || block.timestamp - updatedAt > sequencerGracePeriod) {
+                revert Errors.SequencerDown();
+            }
+        } catch {
+            revert Errors.SequencerDown();
         }
     }
 

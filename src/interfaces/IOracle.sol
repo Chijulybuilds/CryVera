@@ -28,6 +28,12 @@ interface IOracle {
     /// @notice Clears circuit-breaker bounds for an asset (disables the check).
     function clearPriceBounds(address asset) external;
 
+    /// @notice Sets the optional Chainlink sequencer feed used to pause pricing during downtime.
+    function setSequencerFeed(address feed) external;
+
+    /// @notice Sets the maximum allowed age of the sequencer heartbeat before pricing is rejected.
+    function setSequencerGracePeriod(uint256 gracePeriod) external;
+
     /// @notice Emits `PriceFeedUpdated` for the asset's current feed, as
     ///         registered in the AssetRegistry. Pure off-chain observability
     ///         hook — the registry remains the source of truth.

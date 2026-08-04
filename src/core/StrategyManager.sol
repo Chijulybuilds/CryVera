@@ -125,6 +125,7 @@ contract StrategyManager is AccessControl, ReentrancyGuard {
         returns (uint256 withdrawn)
     {
         _registered(strategy);
+        if (s_paused[strategy]) revert Errors.StrategyIsPaused();
         if (receiver == address(0) || assets == 0) revert Errors.ZeroAmount();
         withdrawn = IStrategy(strategy).withdraw(assets, receiver);
         if (withdrawn > assets) revert Errors.StrategyWithdrawalFailed();
@@ -180,7 +181,8 @@ contract StrategyManager is AccessControl, ReentrancyGuard {
 
     function _enterable(address strategy, uint256 assets) private view {
         _registered(strategy);
-        if (!s_active[strategy] || s_paused[strategy]) revert Errors.StrategyNotActive(strategy);
+        if (s_paused[strategy]) revert Errors.StrategyIsPaused();
+        if (!s_active[strategy]) revert Errors.StrategyNotActive(strategy);
 
         uint256 totalAfter = IStrategy(strategy).totalAssets() + assets;
 

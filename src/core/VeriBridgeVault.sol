@@ -14,11 +14,13 @@ import {IStrategyManager} from "../interfaces/IStrategyManager.sol";
 import {IPositionManager} from "../interfaces/IPositionManager.sol";
 import {AssetTypes} from "../types/Asset.sol";
 import {Errors} from "../libraries/Errors.sol";
+import {Events} from "../libraries/Events.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
 /// @title VeriBridgeVault
 /// @notice Ethereum's canonical settlement and sole share-accounting contract.
 /// @dev RBT supply equals vault shares. Strategy values are read live; the router never mirrors them.
-contract VeriBridgeVault is AccessControl, ReentrancyGuard {
+contract VeriBridgeVault is AccessControl, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
 
     /// ============================================================================
@@ -39,7 +41,7 @@ contract VeriBridgeVault is AccessControl, ReentrancyGuard {
     /// ============================================================================
     /// STORAGE LAYOUT ANNOTATIONS (SLOTS 0 - 2)
     /// ============================================================================
-    /// @dev Slot 0: Optional position manager for user tracking.
+    /// @dev Slot 0: Optional position manager for user tracking on the vault.
     IPositionManager public positionManager;
 
     /// @dev Slot 1: Global deposit pause sentinel state.
@@ -48,81 +50,171 @@ contract VeriBridgeVault is AccessControl, ReentrancyGuard {
     /// @dev Slot 2: Accounted custody only; unsolicited token donations are excluded.
     mapping(address => uint256) private s_idleAssets;
 
-    /// ============================================================================
-    /// EVENTS
-    /// ============================================================================
-    event Deposited(
-        address indexed payer, address indexed receiver, address indexed asset, uint256 assets, uint256 shares
-    );
-    event Redeemed(
-        address indexed owner, address indexed receiver, address indexed asset, uint256 shares, uint256 assets
-    );
-    event Allocated(uint256 indexed strategyId, address indexed strategy, uint256 assets);
-    event Harvested(address indexed strategy, uint256 assetsBefore, uint256 assetsAfter);
-    event DepositsPaused(bool paused);
-    event TokenRescued(address indexed token, address indexed recipient, uint256 amount);
-
-    constructor(address admin, address guardian, address registry, address oracle_, address rbt_, address manager) {
+    /**
+     * @param admin address that controls the Vault system
+     * @param guardian address only involved in pausing of vault systems and actions
+     * @param registry address of AseetRegistry showing supported assets as of deployment
+     * @param oracle_ address of the oracle contract
+     * @param rbt_ address of the RBT token contract
+     * @param strategymanager address of the strategy manager contract
+     */
+    constructor(
+        address admin,
+        address guardian,
+        address registry,
+        address oracle_,
+        address rbt_,
+        address strategymanager
+    ) {
         if (
             admin == address(0) || guardian == address(0) || registry == address(0) || oracle_ == address(0)
-                || rbt_ == address(0) || manager == address(0)
+                || rbt_ == address(0) || strategymanager == address(0)
         ) revert Errors.ZeroAddress();
         assetRegistry = IAssetRegistry(registry);
         oracle = IOracle(oracle_);
         rbt = IRBT(rbt_);
-        strategyManager = IStrategyManager(manager);
+        strategyManager = IStrategyManager(strategymanager);
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(GUARDIAN_ROLE, guardian);
     }
 
     modifier whenDepositsOpen() {
-        if (depositsPaused) revert Errors.DepositPaused();
+        if (depositsPaused || paused()) revert Errors.DepositPaused();
         _;
     }
 
-    function deposit(address asset, uint256 assets, address receiver, uint256 strategyId)
+    function deposit(address asset, uint256 assets, address receiver)
         external
         nonReentrant
         whenDepositsOpen
         returns (uint256 shares)
     {
         if (assets == 0 || receiver == address(0)) revert Errors.ZeroAmount();
-        if (!assetRegistry.isSupported(asset)) revert Errors.AssetNotSupported(asset);
-        address strategy = strategyManager.getStrategyAddress(strategyId);
-        if (!strategyManager.isActive(strategy)) revert Errors.StrategyNotActive(strategy);
-        if (strategyManager.strategyAsset(strategy) != asset) revert Errors.StrategyAssetMismatch(strategy, asset);
+        if (!assetRegistry.isSupported(asset)) {
+            revert Errors.AssetNotSupported(asset);
+        }
         uint256 assetsBefore = totalAssets();
         uint256 balanceBefore = IERC20(asset).balanceOf(address(this));
         IERC20(asset).safeTransferFrom(msg.sender, address(this), assets);
-        uint256 received = IERC20(asset).balanceOf(address(this)) - balanceBefore;
-        if (received != assets) revert Errors.InsufficientReceived(assets, received);
-        uint256 value = _value(asset, received);
+        uint256 AmountOfAssetreceived = IERC20(asset).balanceOf(address(this)) - balanceBefore;
+        if (AmountOfAssetreceived != assets) {
+            revert Errors.InsufficientReceived(assets, AmountOfAssetreceived);
+        }
+        uint256 value = _value(asset, AmountOfAssetreceived);
         shares = Math.mulDiv(value, totalShares() + VIRTUAL_SHARES, assetsBefore + VIRTUAL_ASSETS);
         if (shares == 0) revert Errors.ZeroAmount();
-        s_idleAssets[asset] += received;
+        s_idleAssets[asset] += AmountOfAssetreceived;
         rbt.mint(receiver, shares);
-        if (address(positionManager) != address(0)) positionManager.recordDeposit(receiver, strategyId, shares);
-        emit Deposited(msg.sender, receiver, asset, received, shares);
+
+        emit Events.Deposited(msg.sender, receiver, asset, AmountOfAssetreceived, shares);
+    }
+
+    /// @notice Deposits collateral, mints RBT, records the user's strategy position,
+    /// and immediately allocates the deposited collateral to the selected strategy.
+    ///
+    /// @dev The strategy must accept the exact deposited asset.
+    /// The Vault remains the sole authority for share/RBT accounting.
+    /// PositionManager only records ownership/strategy metadata.
+    function depositAndAllocate(address asset, uint256 assets, address receiver, uint256 strategyId)
+        external
+        nonReentrant
+        whenDepositsOpen
+        returns (uint256 shares)
+    {
+        if (assets == 0 || receiver == address(0)) {
+            revert Errors.ZeroAmount();
+        }
+        if (!assetRegistry.isSupported(asset)) {
+            revert Errors.AssetNotSupported(asset);
+        }
+        address strategy = strategyManager.getStrategyAddress(strategyId);
+        if (!strategyManager.isActive(strategy)) {
+            revert Errors.StrategyNotActive(strategy);
+        }
+        if (strategyManager.strategyAsset(strategy) != asset) {
+            revert Errors.StrategyAssetMismatch(strategy, asset);
+        }
+
+        uint256 assetsBefore = totalAssets();
+
+        uint256 balanceBefore = IERC20(asset).balanceOf(address(this));
+        IERC20(asset).safeTransferFrom(msg.sender, address(this), assets);
+        uint256 AmountOfAssetreceived = IERC20(asset).balanceOf(address(this)) - balanceBefore;
+        if (AmountOfAssetreceived != assets) {
+            revert Errors.InsufficientReceived(assets, AmountOfAssetreceived);
+        }
+        uint256 value = _value(asset, AmountOfAssetreceived);
+        shares = Math.mulDiv(value, totalShares() + VIRTUAL_SHARES, assetsBefore + VIRTUAL_ASSETS);
+        if (shares == 0) {
+            revert Errors.ZeroAmount();
+        }
+        s_idleAssets[asset] += AmountOfAssetreceived;
+        rbt.mint(receiver, shares);
+
+        if (address(positionManager) != address(0)) {
+            positionManager.recordDeposit(receiver, strategyId, shares);
+        }
+
+        s_idleAssets[asset] -= AmountOfAssetreceived;
+
+        IERC20(asset).forceApprove(address(strategyManager), AmountOfAssetreceived);
+
+        uint256 allocated = strategyManager.depositToStrategy(strategy, AmountOfAssetreceived);
+
+        // Clear approval immediately after use.
+        IERC20(asset).forceApprove(address(strategyManager), 0);
+
+        if (allocated != AmountOfAssetreceived) {
+            revert Errors.StrategyDepositFailed();
+        }
+
+        emit Events.Deposited(msg.sender, receiver, asset, AmountOfAssetreceived, shares);
+
+        emit Events.Allocated(strategyId, strategy, allocated);
     }
 
     /// @notice Invests already-accounted vault custody. No user balance is ever held in the router or a strategy.
-    function allocate(uint256 strategyId, uint256 assets) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
+    function allocate(uint256 strategyId, uint256 assets)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+        nonReentrant
+        whenNotPaused
+    {
         address strategy = strategyManager.getStrategyAddress(strategyId);
         address asset = strategyManager.strategyAsset(strategy);
-        if (!strategyManager.isActive(strategy)) revert Errors.StrategyNotActive(strategy);
-        if (assets == 0 || assets > s_idleAssets[asset]) revert Errors.InsufficientAssets();
+        if (!strategyManager.isActive(strategy)) {
+            revert Errors.StrategyNotActive(strategy);
+        }
+        if (assets == 0 || assets > s_idleAssets[asset]) {
+            revert Errors.InsufficientAssets();
+        }
+
+        /// s_idleAssets signifies the amount of assets siiting in the vault
         s_idleAssets[asset] -= assets;
         IERC20(asset).forceApprove(address(strategyManager), assets);
-        uint256 received = strategyManager.depositToStrategy(strategy, assets);
+        uint256 AmountOfAssetsreceived = strategyManager.depositToStrategy(strategy, assets);
         IERC20(asset).forceApprove(address(strategyManager), 0);
-        if (received != assets) revert Errors.StrategyDepositFailed();
-        emit Allocated(strategyId, strategy, assets);
+        if (AmountOfAssetsreceived != assets) revert Errors.StrategyDepositFailed();
+        emit Events.Allocated(strategyId, strategy, assets);
     }
 
     /// @notice Burns receipts and pays an exact chosen collateral amount; liquidity is pulled from matching strategies as needed.
-    function redeem(address asset, uint256 shares, address receiver) external nonReentrant returns (uint256 assets) {
+
+    /**
+     * @param asset Address of ERC20 to be retrieved
+     * @param shares the amount of backed RBT of shares to be reddemed
+     * @param receiver the address to receive the redeemed assets
+     */
+    function redeem(address asset, uint256 shares, address receiver)
+        external
+        nonReentrant
+        whenNotPaused
+        returns (uint256 assets)
+    {
         if (shares == 0 || receiver == address(0)) revert Errors.ZeroAmount();
-        if (rbt.balanceOf(msg.sender) < shares) revert Errors.InsufficientShares();
+        if (rbt.balanceOf(msg.sender) < shares) {
+            revert Errors.InsufficientShares();
+        }
         uint256 assetsBefore = totalAssets();
         uint256 value = Math.mulDiv(shares, assetsBefore + VIRTUAL_ASSETS, totalShares() + VIRTUAL_SHARES);
         assets = Math.mulDiv(value, 10 ** assetRegistry.getAsset(asset).decimals, oracle.getPrice(asset));
@@ -132,14 +224,19 @@ contract VeriBridgeVault is AccessControl, ReentrancyGuard {
         rbt.burnFrom(msg.sender, shares);
         s_idleAssets[asset] -= assets;
         IERC20(asset).safeTransfer(receiver, assets);
-        if (address(positionManager) != address(0)) positionManager.recordRedemption(msg.sender, shares);
-        emit Redeemed(msg.sender, receiver, asset, shares, assets);
+        if (address(positionManager) != address(0)) {
+            positionManager.recordRedemption(msg.sender, shares);
+        }
+        emit Events.Redeemed(msg.sender, receiver, asset, shares, assets);
     }
 
-    function harvest(uint256 strategyId) external nonReentrant {
+    /**
+     * @param strategyId ID of the strategy to harvest
+     */
+    function harvest(uint256 strategyId) external nonReentrant whenNotPaused {
         address strategy = strategyManager.getStrategyAddress(strategyId);
         (uint256 beforeAssets, uint256 afterAssets) = strategyManager.harvestStrategy(strategy);
-        emit Harvested(strategy, beforeAssets, afterAssets);
+        emit Events.Harvested(strategy, beforeAssets, afterAssets);
     }
 
     /**
@@ -154,7 +251,9 @@ contract VeriBridgeVault is AccessControl, ReentrancyGuard {
         onlyRole(DEFAULT_ADMIN_ROLE)
         nonReentrant
     {
-        if (token == address(0) || recipient == address(0)) revert Errors.ZeroAddress();
+        if (token == address(0) || recipient == address(0)) {
+            revert Errors.ZeroAddress();
+        }
         if (amount == 0) revert Errors.ZeroAmount();
 
         // Invariant protection: cannot rescue RBT share receipts
@@ -164,22 +263,30 @@ contract VeriBridgeVault is AccessControl, ReentrancyGuard {
         if (assetRegistry.isSupported(token)) revert Errors.Unauthorized();
 
         IERC20(token).safeTransfer(recipient, amount);
-        emit TokenRescued(token, recipient, amount);
+        emit Events.TokenRescued(token, recipient, amount);
     }
 
-    function setPositionManager(address manager) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (manager == address(0)) revert Errors.ZeroAddress();
-        positionManager = IPositionManager(manager);
+    function setPositionManager(address strategymanager) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (strategymanager == address(0)) revert Errors.ZeroAddress();
+        positionManager = IPositionManager(strategymanager);
     }
 
     function pauseDeposits() external onlyRole(GUARDIAN_ROLE) {
         depositsPaused = true;
-        emit DepositsPaused(true);
+        emit Events.DepositsPaused(true);
     }
 
     function unpauseDeposits() external onlyRole(DEFAULT_ADMIN_ROLE) {
         depositsPaused = false;
-        emit DepositsPaused(false);
+        emit Events.DepositsPaused(false);
+    }
+
+    function pauseProtocol() external onlyRole(GUARDIAN_ROLE) {
+        _pause();
+    }
+
+    function unpauseProtocol() external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _unpause();
     }
 
     function totalShares() public view returns (uint256) {
@@ -187,23 +294,23 @@ contract VeriBridgeVault is AccessControl, ReentrancyGuard {
     }
 
     function totalAssets() public view returns (uint256 value) {
+        // assetCount gives the total AssetSupported
         uint256 assetCount = assetRegistry.totalAssetsSupported();
 
         for (uint256 i; i < assetCount; ++i) {
             address asset = assetRegistry.assetAt(i);
+            // gives an estimation of the current oracle price of an asset
             value += _value(asset, s_idleAssets[asset]);
         }
-
         uint256 count = strategyManager.strategyCount();
-
         for (uint256 i; i < count; ++i) {
             address strategy = strategyManager.strategyAt(i);
-
             value += _value(strategyManager.strategyAsset(strategy), IStrategy(strategy).totalAssets());
         }
     }
 
     function exchangeRate() external view returns (uint256) {
+        /// share exchange rate = assets / shares
         return Math.mulDiv(totalAssets() + VIRTUAL_ASSETS, 1e18, totalShares() + VIRTUAL_SHARES);
     }
 
@@ -212,14 +319,28 @@ contract VeriBridgeVault is AccessControl, ReentrancyGuard {
     }
 
     function previewDeposit(address asset, uint256 assets) external view returns (uint256) {
+        /// preview the number of shares that will be received for a given amount of assets
         return Math.mulDiv(_value(asset, assets), totalShares() + VIRTUAL_SHARES, totalAssets() + VIRTUAL_ASSETS);
     }
 
+    /**
+     * @notice Returns the amount of assets that would be redeemed for a given number of shares.
+     * @param asset Address of the asset to check.
+     * @param shares Number of shares to redeem.
+     * @return Amount of assets that would be received.
+     */
     function previewRedeem(address asset, uint256 shares) external view returns (uint256) {
+        // first converts shares to asset value
         uint256 value = Math.mulDiv(shares, totalAssets() + VIRTUAL_ASSETS, totalShares() + VIRTUAL_SHARES);
+        // this returns the current oracle price of asset value
         return Math.mulDiv(value, 10 ** assetRegistry.getAsset(asset).decimals, oracle.getPrice(asset));
     }
 
+    /**
+     * @notice Ensures that the vault has sufficient liquidity for a given asset and amount.
+     * @param asset Address of the asset to check.
+     * @param needed Amount of the asset needed.
+     */
     function _ensureLiquidity(address asset, uint256 needed) private {
         uint256 idle = s_idleAssets[asset];
         if (idle >= needed) return;

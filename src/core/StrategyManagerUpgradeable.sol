@@ -8,6 +8,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IStrategy} from "../interfaces/IStrategy.sol";
 import {Errors} from "../libraries/Errors.sol";
+import {Events} from "../libraries/Events.sol";
 
 contract StrategyManagerUpgradeable is Initializable, AccessControl, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -23,10 +24,6 @@ contract StrategyManagerUpgradeable is Initializable, AccessControl, ReentrancyG
     mapping(address => bool) private s_active;
     mapping(address => bool) private s_paused;
     mapping(address => uint256) public depositCap;
-
-    event StrategyRegistered(uint256 indexed id, address indexed strategy, address indexed asset, uint256 cap);
-    event StrategyStatusUpdated(address indexed strategy, bool active, bool paused);
-    event DepositCapUpdated(address indexed strategy, uint256 cap);
 
     constructor() {
         _disableInitializers();
@@ -47,6 +44,7 @@ contract StrategyManagerUpgradeable is Initializable, AccessControl, ReentrancyG
 
     function setVault(address vault_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (vault_ == address(0)) revert Errors.ZeroAddress();
+        // checks is vault has already being configuured
         if (vault != address(0)) revert Errors.AlreadyConfigured();
         vault = vault_;
     }
@@ -68,13 +66,13 @@ contract StrategyManagerUpgradeable is Initializable, AccessControl, ReentrancyG
         s_byId[id] = strategy;
         s_strategies.push(strategy);
         depositCap[strategy] = cap;
-        emit StrategyRegistered(id, strategy, address(IStrategy(strategy).asset()), cap);
+        emit Events.StrategyRegistered(id, strategy, address(IStrategy(strategy).asset()), cap);
     }
 
     function setStrategyActive(address strategy, bool active) external onlyRole(STRATEGY_ADMIN_ROLE) {
         _registered(strategy);
         s_active[strategy] = active;
-        emit StrategyStatusUpdated(strategy, active, s_paused[strategy]);
+        emit Events.StrategyStatusUpdated(strategy, active, s_paused[strategy]);
     }
 
     function setStrategyPaused(address strategy, bool paused) external {
@@ -83,13 +81,13 @@ contract StrategyManagerUpgradeable is Initializable, AccessControl, ReentrancyG
         }
         _registered(strategy);
         s_paused[strategy] = paused;
-        emit StrategyStatusUpdated(strategy, s_active[strategy], paused);
+        emit Events.StrategyStatusUpdated(strategy, s_active[strategy], paused);
     }
 
     function setDepositCap(address strategy, uint256 cap) external onlyRole(STRATEGY_ADMIN_ROLE) {
         _registered(strategy);
         depositCap[strategy] = cap;
-        emit DepositCapUpdated(strategy, cap);
+        emit Events.DepositCapUpdated(strategy, cap);
     }
 
     function depositToStrategy(address strategy, uint256 assets)
@@ -121,6 +119,7 @@ contract StrategyManagerUpgradeable is Initializable, AccessControl, ReentrancyG
         returns (uint256 withdrawn)
     {
         _registered(strategy);
+        if (s_paused[strategy]) revert Errors.StrategyIsPaused();
         if (receiver == address(0) || assets == 0) revert Errors.ZeroAmount();
         withdrawn = IStrategy(strategy).withdraw(assets, receiver);
         if (withdrawn > assets) revert Errors.StrategyWithdrawalFailed();
@@ -145,7 +144,7 @@ contract StrategyManagerUpgradeable is Initializable, AccessControl, ReentrancyG
         s_active[strategy] = false;
         s_paused[strategy] = true;
         withdrawn = IStrategy(strategy).emergencyWithdraw(receiver);
-        emit StrategyStatusUpdated(strategy, false, true);
+        emit Events.StrategyStatusUpdated(strategy, false, true);
     }
 
     function getStrategyAddress(uint256 id) external view returns (address strategy) {
@@ -176,7 +175,10 @@ contract StrategyManagerUpgradeable is Initializable, AccessControl, ReentrancyG
 
     function _enterable(address strategy, uint256 assets) private view {
         _registered(strategy);
-        if (!s_active[strategy] || s_paused[strategy]) {
+        if (s_paused[strategy]) {
+            revert Errors.StrategyIsPaused();
+        }
+        if (!s_active[strategy]) {
             revert Errors.StrategyNotActive(strategy);
         }
         uint256 cap = depositCap[strategy];

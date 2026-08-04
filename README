@@ -1,2 +1,3 @@
-1. Build the RBT
-2. Build the Canonical Vault that accepts, ETH, wBTC and USDC using Chainlink PriceFeed to get recent prices. 
+Today was absolutely about Governance implementation which for now inherites the Ownable contract which one user makes to upgrade by the Timelock proxy-implementations contract to VeriBridgeVault, StrategyManager, OracleManager of 72 hrs for upgrade modifications to the system where a CryVera Improvement proposal(CIP) registry was also implemented to the system to record and show what improvements of upgrade is being made to suers to prefer whether to remove assets or not. 
+
+Although in-depth analysis and security considerations hasn't being implemented yet so contract still remains security abstracted for now. 

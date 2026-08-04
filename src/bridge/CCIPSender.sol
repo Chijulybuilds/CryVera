@@ -8,13 +8,14 @@ import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {IRouterClient} from "@chainlink/ccip/interfaces/IRouterClient.sol";
 import {Client} from "@chainlink/ccip/libraries/Client.sol";
 import {Errors} from "../libraries/Errors.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
 interface IWrappedBurn {
     function burnFrom(address account, uint256 amount) external;
 }
 
 /// @notice CCIP origin endpoint. Canonical deployments lock RBT; satellite deployments burn wrapped RBT.
-contract CCIPSender is AccessControl, ReentrancyGuard {
+contract CCIPSender is AccessControl, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
     uint8 private constant MINT_WRAPPED = 1;
     uint8 private constant UNLOCK_CANONICAL = 2;
@@ -41,7 +42,9 @@ contract CCIPSender is AccessControl, ReentrancyGuard {
     }
 
     function setRemoteReceiver(uint64 chain, address receiver) external onlyRole(BRIDGE_ADMIN_ROLE) {
-        if (chain == 0 || receiver == address(0)) revert Errors.InvalidMessage();
+        if (chain == 0 || receiver == address(0)) {
+            revert Errors.InvalidMessage();
+        }
         remoteReceiver[chain] = receiver;
         emit RemoteReceiverSet(chain, receiver);
     }
@@ -58,14 +61,20 @@ contract CCIPSender is AccessControl, ReentrancyGuard {
         external
         payable
         nonReentrant
+        whenNotPaused
         returns (bytes32 messageId)
     {
         if (receiver == address(0) || amount == 0 || remoteReceiver[destination] == address(0)) {
             revert Errors.InvalidMessage();
         }
-        if (!router.isChainSupported(destination)) revert Errors.UnsupportedChain();
-        if (canonical) IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
-        else IWrappedBurn(token).burnFrom(msg.sender, amount);
+        if (!router.isChainSupported(destination)) {
+            revert Errors.UnsupportedChain();
+        }
+        if (canonical) {
+            IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        } else {
+            IWrappedBurn(token).burnFrom(msg.sender, amount);
+        }
         uint64 nextNonce = ++nonce;
         Client.EVM2AnyMessage memory message = _message(destination, receiver, amount, nextNonce, gasLimit);
         uint256 fee = router.getFee(destination, message);
@@ -82,8 +91,18 @@ contract CCIPSender is AccessControl, ReentrancyGuard {
 
     function setCanonicalReleaseReceiver(address receiver) external onlyRole(BRIDGE_ADMIN_ROLE) {
         if (receiver == address(0)) revert Errors.ZeroAddress();
-        if (canonicalReleaseReceiver != address(0)) revert Errors.AlreadyConfigured();
+        if (canonicalReleaseReceiver != address(0)) {
+            revert Errors.AlreadyConfigured();
+        }
         canonicalReleaseReceiver = receiver;
+    }
+
+    function pauseBridge() external onlyRole(BRIDGE_ADMIN_ROLE) {
+        _pause();
+    }
+
+    function unpauseBridge() external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _unpause();
     }
 
     function _message(uint64 destination, address receiver, uint256 amount, uint64 messageNonce, uint256 gasLimit)

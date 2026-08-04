@@ -13,6 +13,13 @@ abstract contract Events {
                               VAULT
     //////////////////////////////////////////////////////////////*/
 
+    event Redeemed(
+        address indexed owner, address indexed receiver, address indexed asset, uint256 shares, uint256 assets
+    );
+    event Allocated(uint256 indexed strategyId, address indexed strategy, uint256 assets);
+    event Harvested(address indexed strategy, uint256 assetsBefore, uint256 assetsAfter);
+    event DepositsPaused(bool paused);
+    event TokenRescued(address indexed token, address indexed recipient, uint256 amount);
     event Deposited(
         address indexed user, address indexed receiver, address indexed asset, uint256 assets, uint256 shares
     );
@@ -42,15 +49,15 @@ abstract contract Events {
     event YieldHarvested(uint256 previousAssets, uint256 currentAssets);
 
     event VaultUpdated(address indexed oldVault, address indexed newVault);
-    event StrategyRegistered(
-        uint256 indexed strategyId, address indexed strategy, address indexed asset, string version
-    );
+   
     event StrategyActivated(address indexed strategy);
     event StrategyDeactivated(address indexed strategy);
     event StrategyPaused(address indexed strategy);
     event StrategyUnpaused(address indexed strategy);
     event StrategyDepositCapUpdated(address indexed strategy, uint256 newCap);
-
+    event StrategyRegistered(uint256 indexed id, address indexed strategy, address indexed asset, uint256 cap);
+    event StrategyStatusUpdated(address indexed strategy, bool active, bool paused);
+    event DepositCapUpdated(address indexed strategy, uint256 cap);
     event DepositedToStrategy(
         address indexed strategy, uint256 assetsRequested, uint256 actualDeposited, uint256 sharesMinted
     );

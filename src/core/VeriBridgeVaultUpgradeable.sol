@@ -15,6 +15,7 @@ import {IStrategy} from "../interfaces/IStrategy.sol";
 import {IPositionManager} from "../interfaces/IPositionManager.sol";
 import {AssetTypes} from "../types/Asset.sol";
 import {Errors} from "../libraries/Errors.sol";
+import {Events} from "../libraries/Events.sol";
 
 /// @title VeriBridgeVaultUpgradeable
 /// @notice Upgradeable variant of the canonical Vault. Use with a TransparentUpgradeableProxy.
@@ -32,15 +33,6 @@ contract VeriBridgeVaultUpgradeable is Initializable, AccessControl, ReentrancyG
     bool public depositsPaused;
     mapping(address => uint256) private s_idleAssets;
 
-    event Deposited(
-        address indexed payer, address indexed receiver, address indexed asset, uint256 assets, uint256 shares
-    );
-    event Redeemed(
-        address indexed owner, address indexed receiver, address indexed asset, uint256 shares, uint256 assets
-    );
-    event Allocated(uint256 indexed strategyId, address indexed strategy, uint256 assets);
-    event Harvested(address indexed strategy, uint256 assetsBefore, uint256 assetsAfter);
-    event DepositsPaused(bool paused);
 
     /// @dev Prevent implementation from being initialized directly
     constructor() {
@@ -72,13 +64,47 @@ contract VeriBridgeVaultUpgradeable is Initializable, AccessControl, ReentrancyG
         _;
     }
 
-    function deposit(address asset, uint256 assets, address receiver, uint256 strategyId)
+    function deposit(address asset, uint256 assets, address receiver)
         external
         nonReentrant
         whenDepositsOpen
         returns (uint256 shares)
     {
         if (assets == 0 || receiver == address(0)) revert Errors.ZeroAmount();
+        if (!assetRegistry.isSupported(asset)) {
+            revert Errors.AssetNotSupported(asset);
+        }
+        uint256 assetsBefore = totalAssets();
+        uint256 balanceBefore = IERC20(asset).balanceOf(address(this));
+        IERC20(asset).safeTransferFrom(msg.sender, address(this), assets);
+        uint256 AmountOfAssetreceived = IERC20(asset).balanceOf(address(this)) - balanceBefore;
+        if (AmountOfAssetreceived != assets) {
+            revert Errors.InsufficientReceived(assets, AmountOfAssetreceived);
+        }
+        uint256 value = _value(asset, AmountOfAssetreceived);
+        shares = Math.mulDiv(value, totalShares() + VIRTUAL_SHARES, assetsBefore + VIRTUAL_ASSETS);
+        if (shares == 0) revert Errors.ZeroAmount();
+        s_idleAssets[asset] += AmountOfAssetreceived;
+        rbt.mint(receiver, shares);
+
+        emit Events.Deposited(msg.sender, receiver, asset, AmountOfAssetreceived, shares);
+    }
+
+    /// @notice Deposits collateral, mints RBT, records the user's strategy position,
+    /// and immediately allocates the deposited collateral to the selected strategy.
+    ///
+    /// @dev The strategy must accept the exact deposited asset.
+    /// The Vault remains the sole authority for share/RBT accounting.
+    /// PositionManager only records ownership/strategy metadata.
+    function depositAndAllocate(address asset, uint256 assets, address receiver, uint256 strategyId)
+        external
+        nonReentrant
+        whenDepositsOpen
+        returns (uint256 shares)
+    {
+        if (assets == 0 || receiver == address(0)) {
+            revert Errors.ZeroAmount();
+        }
         if (!assetRegistry.isSupported(asset)) {
             revert Errors.AssetNotSupported(asset);
         }
@@ -89,22 +115,43 @@ contract VeriBridgeVaultUpgradeable is Initializable, AccessControl, ReentrancyG
         if (strategyManager.strategyAsset(strategy) != asset) {
             revert Errors.StrategyAssetMismatch(strategy, asset);
         }
+
         uint256 assetsBefore = totalAssets();
+
         uint256 balanceBefore = IERC20(asset).balanceOf(address(this));
         IERC20(asset).safeTransferFrom(msg.sender, address(this), assets);
-        uint256 received = IERC20(asset).balanceOf(address(this)) - balanceBefore;
-        if (received != assets) {
-            revert Errors.InsufficientReceived(assets, received);
+        uint256 AmountOfAssetreceived = IERC20(asset).balanceOf(address(this)) - balanceBefore;
+        if (AmountOfAssetreceived != assets) {
+            revert Errors.InsufficientReceived(assets, AmountOfAssetreceived);
         }
-        uint256 value = _value(asset, received);
+        uint256 value = _value(asset, AmountOfAssetreceived);
         shares = Math.mulDiv(value, totalShares() + VIRTUAL_SHARES, assetsBefore + VIRTUAL_ASSETS);
-        if (shares == 0) revert Errors.ZeroAmount();
-        s_idleAssets[asset] += received;
+        if (shares == 0) {
+            revert Errors.ZeroAmount();
+        }
+        s_idleAssets[asset] += AmountOfAssetreceived;
         rbt.mint(receiver, shares);
+
         if (address(positionManager) != address(0)) {
             positionManager.recordDeposit(receiver, strategyId, shares);
         }
-        emit Deposited(msg.sender, receiver, asset, received, shares);
+
+        s_idleAssets[asset] -= AmountOfAssetreceived;
+
+        IERC20(asset).forceApprove(address(strategyManager), AmountOfAssetreceived);
+
+        uint256 allocated = strategyManager.depositToStrategy(strategy, AmountOfAssetreceived);
+
+        // Clear approval immediately after use.
+        IERC20(asset).forceApprove(address(strategyManager), 0);
+
+        if (allocated != AmountOfAssetreceived) {
+            revert Errors.StrategyDepositFailed();
+        }
+
+        emit Events.Deposited(msg.sender, receiver, asset, AmountOfAssetreceived, shares);
+
+        emit Events.Allocated(strategyId, strategy, allocated);
     }
 
     function allocate(uint256 strategyId, uint256 assets) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
@@ -121,7 +168,7 @@ contract VeriBridgeVaultUpgradeable is Initializable, AccessControl, ReentrancyG
         uint256 received = strategyManager.depositToStrategy(strategy, assets);
         IERC20(asset).forceApprove(address(strategyManager), 0);
         if (received != assets) revert Errors.StrategyDepositFailed();
-        emit Allocated(strategyId, strategy, assets);
+        emit Events.Allocated(strategyId, strategy, assets);
     }
 
     function redeem(address asset, uint256 shares, address receiver) external nonReentrant returns (uint256 assets) {
@@ -140,13 +187,13 @@ contract VeriBridgeVaultUpgradeable is Initializable, AccessControl, ReentrancyG
         if (address(positionManager) != address(0)) {
             positionManager.recordRedemption(msg.sender, shares);
         }
-        emit Redeemed(msg.sender, receiver, asset, shares, assets);
+        emit Events.Redeemed(msg.sender, receiver, asset, shares, assets);
     }
 
     function harvest(uint256 strategyId) external nonReentrant {
         address strategy = strategyManager.getStrategyAddress(strategyId);
         (uint256 beforeAssets, uint256 afterAssets) = strategyManager.harvestStrategy(strategy);
-        emit Harvested(strategy, beforeAssets, afterAssets);
+        emit Events.Harvested(strategy, beforeAssets, afterAssets);
     }
 
     function setPositionManager(address manager) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -156,12 +203,12 @@ contract VeriBridgeVaultUpgradeable is Initializable, AccessControl, ReentrancyG
 
     function pauseDeposits() external onlyRole(GUARDIAN_ROLE) {
         depositsPaused = true;
-        emit DepositsPaused(true);
+        emit Events.DepositsPaused(true);
     }
 
     function unpauseDeposits() external onlyRole(DEFAULT_ADMIN_ROLE) {
         depositsPaused = false;
-        emit DepositsPaused(false);
+        emit Events.DepositsPaused(false);
     }
 
     function totalShares() public view returns (uint256) {
