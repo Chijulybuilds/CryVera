@@ -100,6 +100,7 @@ contract StrategyManagerUpgradeable is Initializable, AccessControl, ReentrancyG
         IERC20 token = IStrategy(strategy).asset();
         uint256 beforeManager = token.balanceOf(address(this));
         token.safeTransferFrom(vault, address(this), assets);
+        /// the asset amount removed from vault
         uint256 pulled = token.balanceOf(address(this)) - beforeManager;
         if (pulled != assets) {
             revert Errors.InsufficientReceived(assets, pulled);
@@ -120,7 +121,8 @@ contract StrategyManagerUpgradeable is Initializable, AccessControl, ReentrancyG
     {
         _registered(strategy);
         if (s_paused[strategy]) revert Errors.StrategyIsPaused();
-        if (receiver == address(0) || assets == 0) revert Errors.ZeroAmount();
+        if (assets == 0) revert Errors.ZeroAmount();
+        if (receiver == address(0)) revert Errors.InvalidAddress();
         withdrawn = IStrategy(strategy).withdraw(assets, receiver);
         if (withdrawn > assets) revert Errors.StrategyWithdrawalFailed();
     }

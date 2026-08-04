@@ -49,7 +49,7 @@ abstract contract Events {
     event YieldHarvested(uint256 previousAssets, uint256 currentAssets);
 
     event VaultUpdated(address indexed oldVault, address indexed newVault);
-   
+
     event StrategyActivated(address indexed strategy);
     event StrategyDeactivated(address indexed strategy);
     event StrategyPaused(address indexed strategy);
@@ -66,6 +66,8 @@ abstract contract Events {
     );
     event StrategyHarvested(address indexed strategy, uint256 yieldHarvested, uint256 pendingYieldRemaining);
     event EmergencyWithdrawTriggered(address indexed strategy, address indexed trigger);
+    event PositionRecorded(address indexed account, uint256 indexed strategyId, uint256 shares, bool redemption);
+    event AllocationRecorded(address indexed account, uint256 indexed strategyId, uint16 bps);
 
     /*//////////////////////////////////////////////////////////////
                               TOKEN

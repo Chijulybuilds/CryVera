@@ -33,7 +33,6 @@ contract VeriBridgeVaultUpgradeable is Initializable, AccessControl, ReentrancyG
     bool public depositsPaused;
     mapping(address => uint256) private s_idleAssets;
 
-
     /// @dev Prevent implementation from being initialized directly
     constructor() {
         _disableInitializers();

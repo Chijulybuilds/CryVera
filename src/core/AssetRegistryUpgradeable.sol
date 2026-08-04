@@ -62,14 +62,14 @@ contract AssetRegistry is AccessControl, IAssetRegistry, Initializable {
     constructor() {
         _disableInitializers();
     }
+
     /**
      * @param admin Best should be a wallet address that will be in charge of asset regeistration
-    */
+     */
     function initialize(address admin) public initializer {
         if (admin == address(0)) {
             revert Errors.ZeroAddress();
         }
-
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(REGISTRY_ADMIN_ROLE, admin);
     }
@@ -87,15 +87,12 @@ contract AssetRegistry is AccessControl, IAssetRegistry, Initializable {
         if (decimals == 0 || decimals > MAX_DECIMALS) {
             revert Errors.InvalidDecimals(decimals);
         }
-
         _requireNotSupported(asset);
         _validatePriceFeed(priceFeed);
-
         s_assets[asset] =
             AssetTypes.AssetConfig({asset: asset, priceFeed: priceFeed, decimals: decimals, enabled: false});
 
         s_supportedAssets.push(asset);
-
         emit Events.AssetRegistered(asset, priceFeed, decimals);
     }
 
@@ -114,12 +111,9 @@ contract AssetRegistry is AccessControl, IAssetRegistry, Initializable {
     /// @inheritdoc IAssetRegistry
     function disableAsset(address asset) external onlyRole(REGISTRY_ADMIN_ROLE) {
         _requireSupported(asset);
-
         AssetTypes.AssetConfig storage config = s_assets[asset];
         if (!config.enabled) revert Errors.AssetAlreadyDisabled(asset);
-
         config.enabled = false;
-
         emit Events.AssetDisabled(asset);
     }
 
