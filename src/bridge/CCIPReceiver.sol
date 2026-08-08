@@ -7,6 +7,7 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {CCIPReceiver as ChainlinkCCIPReceiver} from "@chainlink/ccip/applications/CCIPReceiver.sol";
 import {Client} from "@chainlink/ccip/libraries/Client.sol";
 import {Errors} from "../libraries/Errors.sol";
+import {Events} from "../libraries/Events.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
 interface IWrappedMint {
@@ -26,30 +27,36 @@ contract CCIPReceiver is ChainlinkCCIPReceiver, AccessControl, Pausable {
     address public immutable canonicalSender;
     mapping(uint64 => address) public allowedSender;
     mapping(bytes32 => bool) public processedMessage;
-    event AllowedSenderSet(uint64 indexed sourceChain, address indexed sender);
-    event BridgeReceived(
-        bytes32 indexed messageId,
-        uint64 indexed sourceChain,
-        address indexed receiver,
-        uint256 amount,
-        uint8 action,
-        uint64 nonce
-    );
 
-    constructor(address admin, address router, address wrappedToken_, address canonicalSender_)
+    /**
+     * @param timelock the contract address for the TimeLockController contract
+     * @param admin an EOA that guides the Timelock
+     * @param router the address of the CCIP router
+     * @param wrappedrbttoken_ the address of the wrapped RBT token
+     * @param canonicalSender_ the address of the canonical sender [CCIPSender.sol]
+     */
+
+    constructor(address timelock, address admin, address router, address wrappedrbttoken_, address canonicalSender_)
         ChainlinkCCIPReceiver(router)
     {
-        if (admin == address(0)) revert Errors.ZeroAddress();
-        wrappedToken = wrappedToken_;
+        if (
+            timelock == address(0) || admin == address(0) || router == address(0) || wrappedrbttoken_ == address(0)
+                || canonicalSender_ == address(0)
+        ) revert Errors.ZeroAddress();
+        wrappedToken = wrappedrbttoken_;
         canonicalSender = canonicalSender_;
-        _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        _grantRole(DEFAULT_ADMIN_ROLE, timelock);
         _grantRole(BRIDGE_ADMIN_ROLE, admin);
     }
 
+    /**
+     * @param sourceChain The chainId of source chain
+     * @param sender The contract address holding canonical RBT
+     */
     function setAllowedSender(uint64 sourceChain, address sender) external onlyRole(BRIDGE_ADMIN_ROLE) {
         if (sender == address(0)) revert Errors.ZeroAddress();
         allowedSender[sourceChain] = sender;
-        emit AllowedSenderSet(sourceChain, sender);
+        emit Events.AllowedSenderSet(sourceChain, sender);
     }
 
     function pauseBridge() external onlyRole(BRIDGE_ADMIN_ROLE) {
@@ -98,6 +105,8 @@ contract CCIPReceiver is ChainlinkCCIPReceiver, AccessControl, Pausable {
         } else {
             revert Errors.UnsupportedBridgeAction(action);
         }
-        emit BridgeReceived(message.messageId, message.sourceChainSelector, receiver, amount, action, messageNonce);
+        emit Events.BridgeReceived(
+            message.messageId, message.sourceChainSelector, receiver, amount, action, messageNonce
+        );
     }
 }

@@ -38,8 +38,17 @@ contract VeriBridgeVaultUpgradeable is Initializable, AccessControl, ReentrancyG
         _disableInitializers();
     }
 
+    /**
+     * @param timelock the contract address of the TimeLockController
+     * @param guardian an EOA address in charge of pausing
+     * @param registry the contract address for the AssetRegistry
+     * @param oracle_  the contract address for the OracleManager
+     * @param rbt_ the ERC20 RBT token address
+     * @param manager the contract address for the StrategyManager
+     */
+
     function initialize(
-        address admin,
+        address timelock,
         address guardian,
         address registry,
         address oracle_,
@@ -47,14 +56,14 @@ contract VeriBridgeVaultUpgradeable is Initializable, AccessControl, ReentrancyG
         address manager
     ) public initializer {
         if (
-            admin == address(0) || guardian == address(0) || registry == address(0) || oracle_ == address(0)
+            timelock == address(0) || guardian == address(0) || registry == address(0) || oracle_ == address(0)
                 || rbt_ == address(0) || manager == address(0)
         ) revert Errors.ZeroAddress();
         assetRegistry = IAssetRegistry(registry);
         oracle = IOracle(oracle_);
         rbt = IRBT(rbt_);
         strategyManager = IStrategyManager(manager);
-        _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        _grantRole(DEFAULT_ADMIN_ROLE, timelock);
         _grantRole(GUARDIAN_ROLE, guardian);
     }
 
@@ -73,6 +82,7 @@ contract VeriBridgeVaultUpgradeable is Initializable, AccessControl, ReentrancyG
         if (!assetRegistry.isSupported(asset)) {
             revert Errors.AssetNotSupported(asset);
         }
+
         uint256 assetsBefore = totalAssets();
         uint256 balanceBefore = IERC20(asset).balanceOf(address(this));
         IERC20(asset).safeTransferFrom(msg.sender, address(this), assets);
@@ -114,9 +124,7 @@ contract VeriBridgeVaultUpgradeable is Initializable, AccessControl, ReentrancyG
         if (strategyManager.strategyAsset(strategy) != asset) {
             revert Errors.StrategyAssetMismatch(strategy, asset);
         }
-
         uint256 assetsBefore = totalAssets();
-
         uint256 balanceBefore = IERC20(asset).balanceOf(address(this));
         IERC20(asset).safeTransferFrom(msg.sender, address(this), assets);
         uint256 AmountOfAssetreceived = IERC20(asset).balanceOf(address(this)) - balanceBefore;
@@ -153,7 +161,12 @@ contract VeriBridgeVaultUpgradeable is Initializable, AccessControl, ReentrancyG
         emit Events.Allocated(strategyId, strategy, allocated);
     }
 
-    function allocate(uint256 strategyId, uint256 assets) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
+    /**
+     * @param strategyId unique number that maps to the strategy address assigned to it
+     * @param assets the token to be allocated from the strategyManager
+     * @dev consideration for TimeLock or not is being reviewed
+     */
+    function allocate(uint256 strategyId, uint256 assets) external nonReentrant {
         address strategy = strategyManager.getStrategyAddress(strategyId);
         address asset = strategyManager.strategyAsset(strategy);
         if (!strategyManager.isActive(strategy)) {
@@ -216,14 +229,11 @@ contract VeriBridgeVaultUpgradeable is Initializable, AccessControl, ReentrancyG
 
     function totalAssets() public view returns (uint256 value) {
         uint256 assetCount = assetRegistry.totalAssetsSupported();
-
         for (uint256 i; i < assetCount; ++i) {
             address asset = assetRegistry.assetAt(i);
             value += _value(asset, s_idleAssets[asset]);
         }
-
         uint256 count = strategyManager.strategyCount();
-
         for (uint256 i; i < count; ++i) {
             address strategy = strategyManager.strategyAt(i);
 

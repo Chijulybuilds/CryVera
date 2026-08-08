@@ -40,7 +40,7 @@ import {IAssetRegistry} from "../interfaces/IAssetRegistry.sol";
 /// - Perform oracle calculations
 /// - Manage strategies
 /// - Execute vault accounting
-contract AssetRegistry is AccessControl, IAssetRegistry, Initializable {
+contract AssetRegistryUpgradeable is AccessControl, IAssetRegistry, Initializable {
     /*//////////////////////////////////////////////////////////////
                                ROLES
     //////////////////////////////////////////////////////////////*/
@@ -64,14 +64,15 @@ contract AssetRegistry is AccessControl, IAssetRegistry, Initializable {
     }
 
     /**
-     * @param admin Best should be a wallet address that will be in charge of asset regeistration
+     * @param timelock the contract address for the TimeLockController contract
+     * @param admin an EOA that acts as an external admin
      */
-    function initialize(address admin) public initializer {
-        if (admin == address(0)) {
+    function initialize(address timelock, address admin) public initializer {
+        if (timelock == address(0)) {
             revert Errors.ZeroAddress();
         }
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
-        _grantRole(REGISTRY_ADMIN_ROLE, admin);
+        _grantRole(REGISTRY_ADMIN_ROLE, timelock);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -97,14 +98,11 @@ contract AssetRegistry is AccessControl, IAssetRegistry, Initializable {
     }
 
     /// @inheritdoc IAssetRegistry
-    function enableAsset(address asset) external onlyRole(REGISTRY_ADMIN_ROLE) {
+    function enableAsset(address asset) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _requireSupported(asset);
-
         AssetTypes.AssetConfig storage config = s_assets[asset];
         if (config.enabled) revert Errors.AssetAlreadyEnabled(asset);
-
         config.enabled = true;
-
         emit Events.AssetEnabled(asset);
     }
 

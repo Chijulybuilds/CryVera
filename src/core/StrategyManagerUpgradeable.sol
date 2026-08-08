@@ -29,10 +29,13 @@ contract StrategyManagerUpgradeable is Initializable, AccessControl, ReentrancyG
         _disableInitializers();
     }
 
-    function initialize(address admin) public initializer {
-        if (admin == address(0)) revert Errors.ZeroAddress();
-        _grantRole(DEFAULT_ADMIN_ROLE, admin);
-        _grantRole(STRATEGY_ADMIN_ROLE, admin);
+    /// @param timelock the deployed timelockcontrol address
+    /// @param admin an EOA that srves as a guardian to thhe system
+
+    function initialize(address timelock, address admin) public initializer {
+        if (timelock == address(0)) revert Errors.ZeroAddress();
+        _grantRole(DEFAULT_ADMIN_ROLE, timelock);
+        _grantRole(STRATEGY_ADMIN_ROLE, timelock);
         _grantRole(GUARDIAN_ROLE, admin);
         s_nextId = 1;
     }
@@ -75,10 +78,7 @@ contract StrategyManagerUpgradeable is Initializable, AccessControl, ReentrancyG
         emit Events.StrategyStatusUpdated(strategy, active, s_paused[strategy]);
     }
 
-    function setStrategyPaused(address strategy, bool paused) external {
-        if (!hasRole(STRATEGY_ADMIN_ROLE, msg.sender) && !hasRole(GUARDIAN_ROLE, msg.sender)) {
-            revert Errors.Unauthorized();
-        }
+    function setStrategyPaused(address strategy, bool paused) external onlyRole(GUARDIAN_ROLE) {
         _registered(strategy);
         s_paused[strategy] = paused;
         emit Events.StrategyStatusUpdated(strategy, s_active[strategy], paused);
@@ -138,10 +138,12 @@ contract StrategyManagerUpgradeable is Initializable, AccessControl, ReentrancyG
         return IStrategy(strategy).harvest();
     }
 
-    function emergencyWithdraw(address strategy, address receiver) external nonReentrant returns (uint256 withdrawn) {
-        if (!hasRole(GUARDIAN_ROLE, msg.sender) && !hasRole(DEFAULT_ADMIN_ROLE, msg.sender)) {
-            revert Errors.Unauthorized();
-        }
+    function emergencyWithdraw(address strategy, address receiver)
+        external
+        nonReentrant
+        onlyRole(GUARDIAN_ROLE)
+        returns (uint256 withdrawn)
+    {
         _registered(strategy);
         s_active[strategy] = false;
         s_paused[strategy] = true;

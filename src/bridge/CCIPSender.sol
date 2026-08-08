@@ -9,7 +9,9 @@ import {IRouterClient} from "@chainlink/ccip/interfaces/IRouterClient.sol";
 import {Client} from "@chainlink/ccip/libraries/Client.sol";
 import {Errors} from "../libraries/Errors.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {Events} from "../libraries/Events.sol";
 
+// tells the CCIP Sender that there are wRBT to be burned "from"
 interface IWrappedBurn {
     function burnFrom(address account, uint256 amount) external;
 }
@@ -24,31 +26,45 @@ contract CCIPSender is AccessControl, ReentrancyGuard, Pausable {
     address public immutable token;
     bool public immutable canonical;
     uint64 public nonce;
-    mapping(uint64 => address) public remoteReceiver;
-    address public canonicalReleaseReceiver;
-    event RemoteReceiverSet(uint64 indexed chain, address indexed receiver);
-    event BridgeSent(
-        bytes32 indexed messageId, uint64 indexed destination, address indexed receiver, uint256 amount, uint64 nonce
-    );
-    event CanonicalReleased(address indexed receiver, uint256 amount);
+    mapping(uint64 => address) public remoteReceiver; // remotereceiver that shows the address of the contract that receives the CCIP messages on the destination chain
+    address public canonicalReleaseReceiver; // a trusted address that let's canonical RBT to be released
 
-    constructor(address admin, address router_, address token_, bool canonical_) {
-        if (admin == address(0) || router_ == address(0) || token_ == address(0)) revert Errors.ZeroAddress();
+    /**
+     * @param admin address that controls the system
+     * @param timelock contract address of the TimeLockController
+     * @param router_ the CCIP router address for the source chain
+     * @param rbttoken_ the rbt token to be sent
+     * @param canonical_ true or false statement that reflects if the deployment is canonical
+     */
+    constructor(address admin, address timelock, address router_, address rbttoken_, bool canonical_) {
+        if (admin == address(0) || timelock == address(0) || router_ == address(0) || rbttoken_ == address(0)) {
+            revert Errors.ZeroAddress();
+        }
         router = IRouterClient(router_);
-        token = token_;
+        token = rbttoken_;
         canonical = canonical_;
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
-        _grantRole(BRIDGE_ADMIN_ROLE, admin);
+        _grantRole(BRIDGE_ADMIN_ROLE, timelock);
     }
 
+    /**
+     * @param chain the destination chain ID
+     * @param receiver the address of the contract that receives the CCIP messages on the destination chain
+     */
     function setRemoteReceiver(uint64 chain, address receiver) external onlyRole(BRIDGE_ADMIN_ROLE) {
         if (chain == 0 || receiver == address(0)) {
             revert Errors.InvalidMessage();
         }
         remoteReceiver[chain] = receiver;
-        emit RemoteReceiverSet(chain, receiver);
+        emit Events.RemoteReceiverSet(chain, receiver);
     }
 
+    /**
+     * @param destination the destination chain ID
+     * @param receiver the address of the contract that receives the CCIP messages on the destination chain
+     * @param amount the amount of tokens to be sent
+     * @param gasLimit the gas limit for the transaction
+     */
     function quoteFee(uint64 destination, address receiver, uint256 amount, uint256 gasLimit)
         external
         view
@@ -57,6 +73,12 @@ contract CCIPSender is AccessControl, ReentrancyGuard, Pausable {
         return router.getFee(destination, _message(destination, receiver, amount, nonce + 1, gasLimit));
     }
 
+    /**
+     * @param destination the destination chain ID
+     * @param receiver the address of the contract that receives the CCIP messages on the destination chain
+     * @param amount the amount of tokens to be sent
+     * @param gasLimit the gas limit for the transaction
+     */
     function bridge(uint64 destination, address receiver, uint256 amount, uint256 gasLimit)
         external
         payable
@@ -80,13 +102,13 @@ contract CCIPSender is AccessControl, ReentrancyGuard, Pausable {
         uint256 fee = router.getFee(destination, message);
         if (msg.value != fee) revert Errors.InvalidFee();
         messageId = router.ccipSend{value: fee}(destination, message);
-        emit BridgeSent(messageId, destination, receiver, amount, nextNonce);
+        emit Events.BridgeSent(messageId, destination, receiver, amount, nextNonce);
     }
 
     function releaseCanonical(address receiver, uint256 amount) external {
         if (msg.sender != canonicalReleaseReceiver) revert Errors.NotBridge();
         IERC20(token).safeTransfer(receiver, amount);
-        emit CanonicalReleased(receiver, amount);
+        emit Events.CanonicalReleased(receiver, amount);
     }
 
     function setCanonicalReleaseReceiver(address receiver) external onlyRole(BRIDGE_ADMIN_ROLE) {
@@ -97,11 +119,11 @@ contract CCIPSender is AccessControl, ReentrancyGuard, Pausable {
         canonicalReleaseReceiver = receiver;
     }
 
-    function pauseBridge() external onlyRole(BRIDGE_ADMIN_ROLE) {
+    function pauseBridge() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _pause();
     }
 
-    function unpauseBridge() external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function unpauseBridge() external onlyRole(BRIDGE_ADMIN_ROLE) {
         _unpause();
     }
 

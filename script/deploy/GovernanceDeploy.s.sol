@@ -12,20 +12,24 @@ contract GovernanceDeploy is Script {
     function run() external {
         vm.startBroadcast();
 
-        // 72 hours
-        uint256 minDelay = 72 * 60 * 60;
+        address safe = vm.envOr("SAFE_ADDRESS", msg.sender);
+        address timelockAdmin = vm.envOr("TIMELOCK_ADMIN", safe);
+        uint256 minDelay = vm.envOr("TIMELOCK_DELAY", uint256(72 * 60 * 60));
 
         address[] memory proposers = new address[](1);
         address[] memory executors = new address[](1);
 
-        proposers[0] = msg.sender; // placeholder, replace with Safe address off-chain
-        executors[0] = address(0);
+        proposers[0] = safe;
+        executors[0] = safe;
 
-        TimelockController timelock = new TimelockController(minDelay, proposers, executors, msg.sender);
+        TimelockController timelock = new TimelockController(minDelay, proposers, executors, timelockAdmin);
 
-        ProxyAdmin proxyAdmin = new ProxyAdmin(msg.sender);
+        // The ProxyAdmin should be owned by the Timelock so upgrade proposals flow through
+        // Safe -> TimelockController -> ProxyAdmin -> TransparentUpgradeableProxy.
+        ProxyAdmin proxyAdmin = new ProxyAdmin(address(timelock));
 
-        // Example of deploying a dummy implementation and proxy would go here.
+        // Upgradeable implementations should be initialized with the Timelock address (or a
+        // dedicated governance controller address) rather than directly with a deployer EOA.
 
         vm.stopBroadcast();
     }

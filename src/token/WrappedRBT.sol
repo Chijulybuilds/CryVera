@@ -11,7 +11,10 @@ contract WrappedRBT is ERC20, ERC20Permit, AccessControl {
     address public mintBridge;
     address public burnBridge;
 
-    constructor(address admin, string memory name_, string memory symbol_) ERC20(name_, symbol_) ERC20Permit(name_) {
+    constructor(address admin, string memory name_, string memory symbol_)
+        ERC20("Wrapped Receipt Base Token", "wRBT")
+        ERC20Permit("Wrapped Receipt Base Token")
+    {
         if (admin == address(0)) revert Errors.ZeroAddress();
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
     }

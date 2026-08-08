@@ -93,4 +93,27 @@ abstract contract Events {
     event StalenessThresholdUpdated(address indexed asset, uint256 threshold);
     event PriceBoundsUpdated(address indexed asset, uint256 minPrice, uint256 maxPrice);
     event PriceBoundsCleared(address indexed asset);
+
+    /*//////////////////////////////////////////////////////////////
+                               CCIPSENDER
+    //////////////////////////////////////////////////////////////*/
+
+    event RemoteReceiverSet(uint64 indexed chain, address indexed receiver);
+    event BridgeSent(
+        bytes32 indexed messageId, uint64 indexed destination, address indexed receiver, uint256 amount, uint64 nonce
+    );
+    event CanonicalReleased(address indexed receiver, uint256 amount);
+
+    /*//////////////////////////////////////////////////////////////
+                              CCIPRECEIVER
+    //////////////////////////////////////////////////////////////*/
+    event AllowedSenderSet(uint64 indexed sourceChain, address indexed sender);
+    event BridgeReceived(
+        bytes32 indexed messageId,
+        uint64 indexed sourceChain,
+        address indexed receiver,
+        uint256 amount,
+        uint8 action,
+        uint64 nonce
+    );
 }

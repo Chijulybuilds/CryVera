@@ -2,7 +2,7 @@
 pragma solidity ^0.8.18;
 
 import "forge-std/Test.sol";
-import {CIPRegistry} from "../src/governance/CIPRegistry.sol";
+import {CIPRegistry} from "../src/governance/CIPRegistryUpgradeable.sol";
 
 contract CIPRegistryTest is Test {
     CIPRegistry public registry;

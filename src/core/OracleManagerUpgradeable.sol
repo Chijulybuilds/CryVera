@@ -34,11 +34,14 @@ contract OracleManagerUpgradeable is Initializable, AccessControl, IOracle {
         _disableInitializers();
     }
 
-    function initialize(address admin, address assetregistry) public initializer {
-        if (admin == address(0)) revert Errors.ZeroAddress();
+    /// @param timelock the contract address for the TimeLockController
+    /// @param assetregistry the contract address for the AssetRegistry
+
+    function initialize(address timelock, address assetregistry) public initializer {
+        if (timelock == address(0)) revert Errors.ZeroAddress();
         if (assetregistry == address(0)) revert Errors.ZeroAddress();
-        _grantRole(DEFAULT_ADMIN_ROLE, admin);
-        _grantRole(ORACLE_ADMIN_ROLE, admin);
+        _grantRole(DEFAULT_ADMIN_ROLE, timelock);
+        _grantRole(ORACLE_ADMIN_ROLE, timelock);
         i_registry = IAssetRegistry(assetregistry);
         sequencerGracePeriod = 3600;
     }

@@ -11,7 +11,7 @@ import {Errors} from "../libraries/Errors.sol";
 contract RBT is ERC20, ERC20Permit, AccessControl {
     address public vault;
 
-    constructor(address admin) ERC20("VeriBridge Receipt Token", "RBT") ERC20Permit("VeriBridge Receipt Token") {
+    constructor(address admin) ERC20("Receipt Base Token", "RBT") ERC20Permit("Receipt Base Token") {
         if (admin == address(0)) revert Errors.ZeroAddress();
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
     }
